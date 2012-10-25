@@ -18,7 +18,7 @@ namespace ProtoBuf
     /// under direct control.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class,
-            AllowMultiple = true, Inherited = false)]
+            AllowMultiple = true, Inherited = true)]
     public class ProtoPartialIgnoreAttribute : ProtoIgnoreAttribute
     {
         /// <summary>

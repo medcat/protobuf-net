@@ -1,19 +1,12 @@
 ﻿#if FEAT_COMPILER
 //#define DEBUG_COMPILE
 using System;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading;
 using ProtoBuf.Meta;
 using ProtoBuf.Serializers;
-
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-using IKVM.Reflection.Emit;
-#else
-using System.Reflection;
-using System.Reflection.Emit;
-#endif
-
+using System.Text;
 
 namespace ProtoBuf.Compiler
 {
@@ -29,9 +22,8 @@ namespace ProtoBuf.Compiler
     }
     internal class CompilerContext
     {
-        public TypeModel Model { get { return model; } }
-
-#if !(FX11 || FEAT_IKVM)
+        
+#if !FX11
         readonly DynamicMethod method;
         static int next;
 #endif
@@ -49,11 +41,11 @@ namespace ProtoBuf.Compiler
 #endif
         }
 
-#if !(FX11 || FEAT_IKVM)
-        public static ProtoSerializer BuildSerializer(IProtoSerializer head, TypeModel model)
+#if !FX11
+        public static ProtoSerializer BuildSerializer(IProtoSerializer head)
         {
             Type type = head.ExpectedType;
-            CompilerContext ctx = new CompilerContext(type, true, true, model);
+            CompilerContext ctx = new CompilerContext(type, true, true);
             ctx.LoadValue(Local.InputValue);
             ctx.CastFromObject(type);
             ctx.WriteNullCheckedTail(type, head, null);
@@ -91,10 +83,10 @@ namespace ProtoBuf.Compiler
             return (ProtoCallback)ctx.method.CreateDelegate(
                 typeof(ProtoCallback));
         }*/
-        public static ProtoDeserializer BuildDeserializer(IProtoSerializer head, TypeModel model)
+        public static ProtoDeserializer BuildDeserializer(IProtoSerializer head)
         {
             Type type = head.ExpectedType;
-            CompilerContext ctx = new CompilerContext(type, false, true, model);
+            CompilerContext ctx = new CompilerContext(type, false, true);
             
             using (Local typedVal = new Local(ctx, type))
             {
@@ -139,18 +131,9 @@ namespace ProtoBuf.Compiler
         {
             Emit(OpCodes.Ret);
         }
-
-        static bool IsObject(Type type)
-        {
-#if FEAT_IKVM
-            return type.FullName == "System.Object";
-#else
-            return type == typeof(object);
-#endif
-        }
         internal void CastToObject(Type type)
         {
-            if(IsObject(type))
+            if (type == typeof(object))
             { }
             else if (type.IsValueType)
             {
@@ -161,7 +144,7 @@ namespace ProtoBuf.Compiler
             }
             else
             {
-                il.Emit(OpCodes.Castclass, MapType(typeof(object)));
+                il.Emit(OpCodes.Castclass, typeof(object));
 #if DEBUG_COMPILE
                 Helpers.DebugWriteLine(OpCodes.Castclass + ": " + type);
 #endif
@@ -170,31 +153,24 @@ namespace ProtoBuf.Compiler
 
         internal void CastFromObject(Type type)
         {
-            if (IsObject(type))
+            if (type == typeof(object))
             { }
             else if (type.IsValueType)
             {
-                switch (MetadataVersion)
-                {
-                    case ILVersion.Net1:
-                        il.Emit(OpCodes.Unbox, type);
-                        il.Emit(OpCodes.Ldobj, type);
-#if DEBUG_COMPILE
-                        Helpers.DebugWriteLine(OpCodes.Unbox + ": " + type);
-                        Helpers.DebugWriteLine(OpCodes.Ldobj + ": " + type);
-#endif
-                        break;
-                    default:
 #if FX11
-                        throw new NotSupportedException();
-#else
-                        il.Emit(OpCodes.Unbox_Any, type);
+                il.Emit(OpCodes.Unbox, type);
+                il.Emit(OpCodes.Ldobj, type);
 #if DEBUG_COMPILE
-                        Helpers.DebugWriteLine(OpCodes.Unbox_Any + ": " + type);
+                Helpers.DebugWriteLine(OpCodes.Unbox + ": " + type);
+                Helpers.DebugWriteLine(OpCodes.Ldobj + ": " + type);
 #endif
-                        break;
+#else
+                il.Emit(OpCodes.Unbox_Any, type);
+#if DEBUG_COMPILE
+                Helpers.DebugWriteLine(OpCodes.Unbox_Any + ": " + type);
 #endif
-                }
+#endif
+
             }
             else
             {
@@ -216,45 +192,24 @@ namespace ProtoBuf.Compiler
             }
             throw new ArgumentException("Meta-key not found", "metaKey");
         }
-        internal int MapMetaKeyToCompiledKey(int metaKey)
-        {
-            if (metaKey < 0 || methodPairs == null) return metaKey; // all meta, or a dummy/wildcard key
-
-            for (int i = 0; i < methodPairs.Length; i++)
-            {
-                if (methodPairs[i].MetaKey == metaKey) return i;
-            }
-            throw new ArgumentException("Key could not be mapped: " + metaKey, "metaKey");
-        }
-
         private readonly bool nonPublic, isWriter;
         internal bool NonPublic { get { return nonPublic; } }
-
-        internal CompilerContext(ILGenerator il, bool isStatic, bool isWriter, RuntimeTypeModel.SerializerPair[] methodPairs, TypeModel model, ILVersion metadataVersion)
+        
+        internal CompilerContext(ILGenerator il, bool isStatic, bool isWriter, RuntimeTypeModel.SerializerPair[] methodPairs)
         {
             if (il == null) throw new ArgumentNullException("il");
             if (methodPairs == null) throw new ArgumentNullException("methodPairs");
-            if (model == null) throw new ArgumentNullException("model");
             this.isStatic = isStatic;
             this.methodPairs = methodPairs;
             this.il = il;
             nonPublic = false;
             this.isWriter = isWriter;
-            this.model = model;
-            this.metadataVersion = metadataVersion;
         }
-#if !(FX11 || FEAT_IKVM)
-        private CompilerContext(Type associatedType, bool isWriter, bool isStatic, TypeModel model)
+#if !FX11
+        private CompilerContext(Type associatedType, bool isWriter, bool isStatic)
         {
-            if (model == null) throw new ArgumentNullException("model");
-#if FX11
-            metadataVersion = ILVersion.Net1;
-#else
-            metadataVersion = ILVersion.Net2;
-#endif
             this.isStatic = isStatic;
             this.isWriter = isWriter;
-            this.model = model;
             nonPublic = true;
             Type[] paramTypes;
             Type returnType;
@@ -268,13 +223,8 @@ namespace ProtoBuf.Compiler
                 returnType = typeof(object);
                 paramTypes = new Type[] { typeof(object), typeof(ProtoReader) };
             }
-            int uniqueIdentifier;
-#if PLAT_NO_INTERLOCKED
-            uniqueIdentifier = ++next;
-#else
-            uniqueIdentifier = Interlocked.Increment(ref next);
-#endif
-            method = new DynamicMethod("proto_" + uniqueIdentifier.ToString(), returnType, paramTypes, associatedType.IsInterface ? typeof(object) : associatedType, true);
+            
+            method = new DynamicMethod("proto_" + Interlocked.Increment(ref next), returnType, paramTypes, associatedType.IsInterface ? typeof(object) : associatedType,true);
             this.il = method.GetILGenerator();
         }
 #endif
@@ -454,8 +404,7 @@ namespace ProtoBuf.Compiler
 #endif
             }
         }
-        public Local GetLocalWithValue(Type type, Compiler.Local fromValue)
-        {
+        public Local GetLocalWithValue(Type type, Compiler.Local fromValue) {
             if (fromValue != null) { return fromValue.AsCopy(); }
             // need to store the value from the stack
             Local result = new Local(this, type);
@@ -464,7 +413,7 @@ namespace ProtoBuf.Compiler
         }
         internal void EmitBasicRead(string methodName, Type expectedType)
         {
-            MethodInfo method = MapType(typeof(ProtoReader)).GetMethod(
+            MethodInfo method = typeof(ProtoReader).GetMethod(
                 methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (method == null || method.ReturnType != expectedType
                 || method.GetParameters().Length != 0) throw new ArgumentException("methodName");
@@ -487,15 +436,14 @@ namespace ProtoBuf.Compiler
             LoadReaderWriter();
             EmitCall(GetWriterMethod(methodName));
         }
-        private MethodInfo GetWriterMethod(string methodName)
+        private static MethodInfo GetWriterMethod(string methodName)
         {
-            Type writerType = MapType(typeof(ProtoWriter));
-            MethodInfo[] methods = writerType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            MethodInfo[] methods = typeof(ProtoWriter).GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             foreach (MethodInfo method in methods)
             {
                 if(method.Name != methodName) continue;
                 ParameterInfo[] pis = method.GetParameters();
-                if (pis.Length == 2 && pis[1].ParameterType == writerType) return method;
+                if (pis.Length == 2 && pis[1].ParameterType == typeof(ProtoWriter)) return method;
             }
             throw new ArgumentException("No suitable method found for: " + methodName, "methodName");
         }
@@ -504,15 +452,13 @@ namespace ProtoBuf.Compiler
             if (Helpers.IsNullOrEmpty(methodName)) throw new ArgumentNullException("methodName");
             MethodInfo method = helperType.GetMethod(
                 methodName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (method == null || method.ReturnType != MapType(typeof(void))) throw new ArgumentException("methodName");
+            if (method == null || method.ReturnType != typeof(void)) throw new ArgumentException("methodName");
             LoadValue(valueFrom);
             LoadReaderWriter();
             EmitCall(method);
         }
         public void EmitCall(MethodInfo method)
         {
-            Helpers.DebugAssert(method != null);
-            CheckAccessibility(method);
             OpCode opcode = (method.IsStatic || method.DeclaringType.IsValueType) ? OpCodes.Call : OpCodes.Callvirt;
             il.EmitCall(opcode, method, null);
 #if DEBUG_COMPILE
@@ -537,7 +483,7 @@ namespace ProtoBuf.Compiler
             {
                 Type underlyingType = null;
 #if !FX11
-                underlyingType = Helpers.GetUnderlyingType(type);
+                underlyingType = Nullable.GetUnderlyingType(type);
 #endif
                 if (underlyingType == null)
                 { // not a nullable T; can invoke directly
@@ -576,17 +522,13 @@ namespace ProtoBuf.Compiler
         {
 #if !FX11
             Type underlyingType;
-            
-            if (type.IsValueType && (underlyingType = Helpers.GetUnderlyingType(type)) != null)
+            if (type.IsValueType && (underlyingType = Nullable.GetUnderlyingType(type)) != null)
             {
                 if(tail.RequiresOldValue)
                 {
                     // we expect the input value to be in valueFrom; need to unpack it from T?
-                    using (Local loc = GetLocalWithValue(type, valueFrom))
-                    {
-                        LoadAddress(loc, type);
-                        EmitCall(type.GetMethod("GetValueOrDefault", Helpers.EmptyTypes));
-                    }
+                    LoadAddress(valueFrom, type);
+                    EmitCall(type.GetMethod("GetValueOrDefault", Helpers.EmptyTypes)); 
                 }
                 else
                 {
@@ -611,11 +553,9 @@ namespace ProtoBuf.Compiler
         {
             EmitCtor(type, Helpers.EmptyTypes);
         }
-
         public void EmitCtor(ConstructorInfo ctor)
         {
             if (ctor == null) throw new ArgumentNullException("ctor");
-            CheckAccessibility(ctor);
             il.Emit(OpCodes.Newobj, ctor);
 #if DEBUG_COMPILE
             Helpers.DebugWriteLine(OpCodes.Newobj + ": " + ctor.DeclaringType);
@@ -635,101 +575,27 @@ namespace ProtoBuf.Compiler
             }
             else
             {
-                ConstructorInfo ctor =  Helpers.GetConstructor(type, parameterTypes, true);
+                ConstructorInfo ctor = type.GetConstructor(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null, parameterTypes, null);
                 if (ctor == null) throw new InvalidOperationException("No suitable constructor found for " + type.FullName);
-                EmitCtor(ctor);
-            }
-        }
-
-        internal void CheckAccessibility(MemberInfo member)
-        {
-            if (member == null)
-            {
-                throw new ArgumentNullException("member");
-            }
-
-            if (!NonPublic)
-            {
-                bool isPublic;
-                switch (member.MemberType)
-                {
-                    case MemberTypes.TypeInfo:
-                        isPublic = ((Type)member).IsPublic;
-                        break;
-                    case MemberTypes.NestedType:
-                        Type type = (Type)member;
-                        do
-                        {
-                            isPublic = type.IsNestedPublic || type.IsPublic;
-                        } while (isPublic && (type = type.DeclaringType) != null);
-                        break;
-                    case MemberTypes.Field:
-                        isPublic = ((FieldInfo)member).IsPublic;
-                        break;
-                    case MemberTypes.Constructor:
-                        isPublic = ((ConstructorInfo)member).IsPublic;
-                        break;
-                    case MemberTypes.Method:
-                        isPublic = ((MethodInfo)member).IsPublic;
-                        if (!isPublic)
-                        {
-                            // allow calls to TypeModel protected methods, and methods we are in the process of creating
-                            if(member is MethodBuilder || member.DeclaringType == MapType(typeof(TypeModel))) isPublic = true; 
-                        }
-                        break;
-                    case MemberTypes.Property:
-                        isPublic = true; // defer to get/set
-                        break;
-                    default:
-                        throw new NotSupportedException(member.MemberType.ToString());
-                }
-                if (!isPublic)
-                {
-                    switch (member.MemberType)
-                    {
-                        case MemberTypes.TypeInfo:
-                        case MemberTypes.NestedType:
-                            throw new InvalidOperationException("Non-public type cannot be used with full dll compilation: " +
-                                ((Type)member).FullName);
-                        default:
-                            throw new InvalidOperationException("Non-public member cannot be used with full dll compilation: " +
-                                member.DeclaringType.FullName + "." + member.Name);
-                    }
-                    
-                }
+                il.Emit(OpCodes.Newobj, ctor);
+#if DEBUG_COMPILE
+                Helpers.DebugWriteLine(OpCodes.Newobj + ": " + type);
+#endif
             }
         }
 
         public void LoadValue(FieldInfo field)
         {
-            CheckAccessibility(field);
             OpCode code = field.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld;
             il.Emit(code, field);
 #if DEBUG_COMPILE
             Helpers.DebugWriteLine(code + ": " + field + " on " + field.DeclaringType);
 #endif
         }
-#if FEAT_IKVM
-        public void StoreValue(System.Reflection.FieldInfo field)
-        {
-            StoreValue(MapType(field.DeclaringType).GetField(field.Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance));
-        }
-        public void StoreValue(System.Reflection.PropertyInfo property)
-        {
-            StoreValue(MapType(property.DeclaringType).GetProperty(property.Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance));
-        }
-        public void LoadValue(System.Reflection.FieldInfo field)
-        {
-            LoadValue(MapType(field.DeclaringType).GetField(field.Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance));
-        }
-        public void LoadValue(System.Reflection.PropertyInfo property)
-        {
-            LoadValue(MapType(property.DeclaringType).GetProperty(property.Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance));
-        }
-#endif
         public void StoreValue(FieldInfo field)
         {
-            CheckAccessibility(field);
             OpCode code = field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld;
             il.Emit(code, field);
 #if DEBUG_COMPILE
@@ -738,13 +604,11 @@ namespace ProtoBuf.Compiler
         }
         public void LoadValue(PropertyInfo property)
         {
-            CheckAccessibility(property);
-            EmitCall(Helpers.GetGetMethod(property, true));
+            EmitCall(property.GetGetMethod(NonPublic));
         }
         public void StoreValue(PropertyInfo property)
         {
-            CheckAccessibility(property);
-            EmitCall(Helpers.GetSetMethod(property, true));
+            EmitCall(property.GetSetMethod(NonPublic));
         }
 
         internal void EmitInstance()
@@ -779,20 +643,11 @@ namespace ProtoBuf.Compiler
             return local.Value.LocalIndex < 256;
 #endif
         }
-#if FEAT_IKVM
-        internal void LoadAddress(Local local, System.Type type)
-        {
-            LoadAddress(local, MapType(type));
-        }
-#endif
         internal void LoadAddress(Local local, Type type)
         {
             if (type.IsValueType)
             {
-                if (local == null)
-                {
-                    throw new InvalidOperationException("Cannot load the address of a struct at the head of the stack");
-                }
+                if (local == null) throw new InvalidOperationException("Cannot load the address of a struct at the head of the stack");
 
                 if (local == Local.InputValue)
                 {
@@ -995,7 +850,7 @@ namespace ProtoBuf.Compiler
                 Type type = local.Type;
                 // check if **never** disposable
                 if ((type.IsValueType || type.IsSealed) &&
-                    !ctx.MapType(typeof(IDisposable)).IsAssignableFrom(type))
+                    !typeof(IDisposable).IsAssignableFrom(type))
                 {
                     return; // nothing to do! easiest "using" block ever
                     // (note that C# wouldn't allow this as a "using" block,
@@ -1012,34 +867,25 @@ namespace ProtoBuf.Compiler
 
                 ctx.EndTry(label, false);
                 ctx.BeginFinally();
-                Type disposableType = ctx.MapType(typeof (IDisposable));
-                MethodInfo dispose = disposableType.GetMethod("Dispose");
+                MethodInfo dispose = typeof(IDisposable).GetMethod("Dispose");
                 Type type = local.Type;
                 // remember that we've already (in the .ctor) excluded the case
                 // where it *cannot* be disposable
                 if (type.IsValueType)
                 {
                     ctx.LoadAddress(local, type);
-                    switch (ctx.MetadataVersion)
-                    {
-                        case ILVersion.Net1:
-                            ctx.LoadValue(local);
-                            ctx.CastToObject(type);
-                            break;
-                        default:
 #if FX11
-                            throw new NotSupportedException();
+                    ctx.LoadValue(local);
+                    ctx.CastToObject(type);
 #else
-                            ctx.Constrain(type);
-                            break;
+                    ctx.Constrain(type);
 #endif
-                    }
                     ctx.EmitCall(dispose);                    
                 }
                 else
                 {
                     Compiler.CodeLabel @null = ctx.DefineLabel();
-                    if (disposableType.IsAssignableFrom(type))
+                    if (typeof(IDisposable).IsAssignableFrom(type))
                     {   // *known* to be IDisposable; just needs a null-check                            
                         ctx.LoadValue(local);
                         ctx.BranchIfFalse(@null, true);
@@ -1047,14 +893,14 @@ namespace ProtoBuf.Compiler
                     }
                     else
                     {   // *could* be IDisposable; test via "as"
-                        using (Compiler.Local disp = new Compiler.Local(ctx, disposableType))
+                        using (Compiler.Local disp = new Compiler.Local(ctx, typeof(IDisposable)))
                         {
                             ctx.LoadValue(local);
-                            ctx.TryCast(disposableType);
+                            ctx.TryCast(typeof(IDisposable));
                             ctx.CopyValue();
                             ctx.StoreValue(disp);
                             ctx.BranchIfFalse(@null, true);
-                            ctx.LoadAddress(disp, disposableType);
+                            ctx.LoadAddress(disp, typeof(IDisposable));
                         }
                     }
                     ctx.EmitCall(dispose);
@@ -1116,19 +962,19 @@ namespace ProtoBuf.Compiler
             Helpers.DebugAssert(type != null, "Not an array: " + arr.Type.FullName);
             LoadValue(arr);
             LoadValue(i);
-            switch(Helpers.GetTypeCode(type)) {
-                case ProtoTypeCode.SByte: Emit(OpCodes.Ldelem_I1); break;
-                case ProtoTypeCode.Int16: Emit(OpCodes.Ldelem_I2); break;
-                case ProtoTypeCode.Int32: Emit(OpCodes.Ldelem_I4); break;
-                case ProtoTypeCode.Int64: Emit(OpCodes.Ldelem_I8); break;
+            switch(Type.GetTypeCode(type)) {
+                case TypeCode.SByte: Emit(OpCodes.Ldelem_I1); break;
+                case TypeCode.Int16: Emit(OpCodes.Ldelem_I2); break;
+                case TypeCode.Int32: Emit(OpCodes.Ldelem_I4); break;
+                case TypeCode.Int64: Emit(OpCodes.Ldelem_I8); break;
 
-                case ProtoTypeCode.Byte: Emit(OpCodes.Ldelem_U1); break;
-                case ProtoTypeCode.UInt16: Emit(OpCodes.Ldelem_U2); break;
-                case ProtoTypeCode.UInt32: Emit(OpCodes.Ldelem_U4); break;
-                case ProtoTypeCode.UInt64: Emit(OpCodes.Ldelem_I8); break; // odd, but this is what C# does...
+                case TypeCode.Byte: Emit(OpCodes.Ldelem_U1); break;
+                case TypeCode.UInt16: Emit(OpCodes.Ldelem_U2); break;
+                case TypeCode.UInt32: Emit(OpCodes.Ldelem_U4); break;
+                case TypeCode.UInt64: Emit(OpCodes.Ldelem_I8); break; // odd, but this is what C# does...
 
-                case ProtoTypeCode.Single: Emit(OpCodes.Ldelem_R4); break;
-                case ProtoTypeCode.Double: Emit(OpCodes.Ldelem_R8); break;
+                case TypeCode.Single: Emit(OpCodes.Ldelem_R4); break;
+                case TypeCode.Double: Emit(OpCodes.Ldelem_R8); break;
                 default:
                     if (type.IsValueType)
                     {
@@ -1157,47 +1003,45 @@ namespace ProtoBuf.Compiler
 #if DEBUG_COMPILE
             Helpers.DebugWriteLine(OpCodes.Ldtoken + ": " + type);
 #endif
-            EmitCall(MapType(typeof(System.Type)).GetMethod("GetTypeFromHandle"));
+            EmitCall(typeof(Type).GetMethod("GetTypeFromHandle"));
         }
 
-        internal void ConvertToInt32(ProtoTypeCode typeCode, bool uint32Overflow)
+        internal void ConvertToInt32(TypeCode typeCode)
         {
             switch (typeCode)
             {
-                case ProtoTypeCode.Byte:
-                case ProtoTypeCode.SByte:
-                case ProtoTypeCode.Int16:
-                case ProtoTypeCode.UInt16:
+                case TypeCode.Byte:
+                case TypeCode.SByte:
+                case TypeCode.Int16:
+                case TypeCode.UInt16:
                     Emit(OpCodes.Conv_I4);
                     break;
-                case ProtoTypeCode.Int32:
-                    break;
-                case ProtoTypeCode.Int64:
+                case TypeCode.Int32:
+                    break;                
+                case TypeCode.Int64:
                     Emit(OpCodes.Conv_Ovf_I4);
                     break;
-                case ProtoTypeCode.UInt32:
-                    Emit(uint32Overflow ? OpCodes.Conv_Ovf_I4_Un : OpCodes.Conv_Ovf_I4);
-                    break;
-                case ProtoTypeCode.UInt64:
+                case TypeCode.UInt32:
+                case TypeCode.UInt64:
                     Emit(OpCodes.Conv_Ovf_I4_Un);
                     break;
                 default:
-                    throw new InvalidOperationException("ConvertToInt32 not implemented for: " + typeCode);
+                    throw new InvalidOperationException();
             }
         }
 
-        internal void ConvertFromInt32(ProtoTypeCode typeCode, bool uint32Overflow)
+        internal void ConvertFromInt32(TypeCode typeCode)
         {
             switch (typeCode)
             {
-                case ProtoTypeCode.SByte: Emit(OpCodes.Conv_Ovf_U1); break;
-                case ProtoTypeCode.Byte: Emit(OpCodes.Conv_Ovf_I1); break;
-                case ProtoTypeCode.Int16: Emit(OpCodes.Conv_Ovf_I2); break;
-                case ProtoTypeCode.UInt16: Emit(OpCodes.Conv_Ovf_U2); break;
-                case ProtoTypeCode.Int32: break;
-                case ProtoTypeCode.UInt32: Emit(uint32Overflow ? OpCodes.Conv_Ovf_U4 : OpCodes.Conv_U4); break;
-                case ProtoTypeCode.Int64: Emit(OpCodes.Conv_I8); break;
-                case ProtoTypeCode.UInt64: Emit(OpCodes.Conv_U8); break;
+                case TypeCode.SByte: Emit(OpCodes.Conv_Ovf_U1); break;
+                case TypeCode.Byte: Emit(OpCodes.Conv_Ovf_I1); break;
+                case TypeCode.Int16: Emit(OpCodes.Conv_Ovf_I2); break;
+                case TypeCode.UInt16: Emit(OpCodes.Conv_Ovf_U2); break;
+                case TypeCode.Int32: break;
+                case TypeCode.UInt32: Emit(OpCodes.Conv_Ovf_U4); break;
+                case TypeCode.Int64: Emit(OpCodes.Conv_I8); break;
+                case TypeCode.UInt64: Emit(OpCodes.Conv_U8); break;
                 default: throw new InvalidOperationException();
             }
         }
@@ -1217,7 +1061,7 @@ namespace ProtoBuf.Compiler
                 LoadValue((int)(((uint)bits[3]) >> 31)); // isNegative (bool, but int for CLI purposes)
                 LoadValue((bits[3] >> 16) & 0xFF); // scale (byte, but int for CLI purposes)
 
-                EmitCtor(MapType(typeof(decimal)), new Type[] { MapType(typeof(int)), MapType(typeof(int)), MapType(typeof(int)), MapType(typeof(bool)), MapType(typeof(byte)) });
+                EmitCtor(typeof(decimal), new Type[] { typeof(int), typeof(int), typeof(int), typeof(bool), typeof(byte) });
             }
         }
 
@@ -1240,8 +1084,8 @@ namespace ProtoBuf.Compiler
                 {
                     LoadValue(bytes[i]);
                 }
-                EmitCtor(MapType(typeof(Guid)), new Type[] { MapType(typeof(int)), MapType(typeof(short)), MapType(typeof(short)),
-                            MapType(typeof(byte)), MapType(typeof(byte)), MapType(typeof(byte)), MapType(typeof(byte)), MapType(typeof(byte)), MapType(typeof(byte)), MapType(typeof(byte)), MapType(typeof(byte)) });
+                EmitCtor(typeof(Guid), new Type[] { typeof(int), typeof(short), typeof(short),
+                            typeof(byte), typeof(byte), typeof(byte), typeof(byte), typeof(byte), typeof(byte), typeof(byte), typeof(byte) });
             }
         }
 
@@ -1254,20 +1098,6 @@ namespace ProtoBuf.Compiler
         {
             LoadReaderWriter();
             LoadValue((isWriter ? typeof(ProtoWriter) : typeof(ProtoReader)).GetProperty("Context"));
-        }
-
-        private readonly TypeModel model;
-
-        internal Type MapType(System.Type type)
-        {
-            return model.MapType(type);
-        }
-
-        private readonly ILVersion metadataVersion;
-        public ILVersion MetadataVersion { get { return metadataVersion; } }
-        public enum ILVersion
-        {
-            Net1, Net2
         }
     }
 }

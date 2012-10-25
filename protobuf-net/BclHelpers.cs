@@ -1,5 +1,6 @@
-﻿using System;
-using System.Reflection;
+﻿
+using System;
+
 namespace ProtoBuf
 {
     internal enum TimeSpanScale
@@ -34,7 +35,7 @@ namespace ProtoBuf
         /// <exception cref="NotSupportedException">If the platform does not support constructor-skipping</exception>
         public static object GetUninitializedObject(Type type)
         {
-#if PLAT_BINARYFORMATTER && !WINRT
+#if PLAT_BINARYFORMATTER
             return System.Runtime.Serialization.FormatterServices.GetUninitializedObject(type);
 #else
             throw new NotSupportedException("Constructor-skipping is not supported on this platform");
@@ -370,9 +371,6 @@ namespace ProtoBuf
         /// </summary>
         public static object ReadNetObject(object value, ProtoReader source, int key, Type type, NetObjectOptions options)
         {
-#if FEAT_IKVM
-            throw new NotSupportedException();
-#else
             SubItemToken token = ProtoReader.StartSubItem(source);
             int fieldNumber;
             int newObjectKey = -1, newTypeKey = -1, tmp;
@@ -396,38 +394,19 @@ namespace ProtoBuf
                         newTypeKey = source.ReadInt32();
                         break;
                     case FieldTypeName:
-                        string typeName = source.ReadString();
-                        type = source.DeserializeType(typeName);
-                        if(type == null)
-                        {
-                            throw new ProtoException("Unable to resolve type: " + typeName + " (you can use the TypeModel.DynamicTypeFormatting event to provide a custom mapping)");
-                        }
-                        if (type == typeof(string))
-                        {
-                            key = -1;
-                        }
-                        else
-                        {
-                            key = source.GetTypeKey(ref type);
-                            if (key < 0)
-                                throw new InvalidOperationException("Dynamic type is not a contract-type: " + type.Name);
-                        }
+                        type = source.DeserializeType(source.ReadString());
+                        key = source.GetTypeKey(ref type);
                         break;
                     case FieldObject:
                         bool isString = type == typeof(string);
-                        bool wasNull = value == null;
-                        bool lateSet = wasNull && isString;
-                        
+                        bool lateSet = value == null && isString;
+                        if (value == null && !lateSet)
+                        {
+                            value = ((options & NetObjectOptions.UseConstructor) == 0) ? BclHelpers.GetUninitializedObject(type) : Activator.CreateInstance(type);
+                        }
                         if (newObjectKey >= 0 && !lateSet)
                         {
-                            if (value == null)
-                            {
-                                source.TrapNextObject(newObjectKey);
-                            }
-                            else
-                            {
-                                source.NetCache.SetKeyedObject(newObjectKey, value);
-                            }
+                            source.NetCache.SetKeyedObject(newObjectKey, value);
                             if (newTypeKey >= 0) source.NetCache.SetKeyedObject(newTypeKey, type);
                         }
                         object oldValue = value;
@@ -440,50 +419,30 @@ namespace ProtoBuf
                             value = ProtoReader.ReadTypedObject(oldValue, key, source, type);
                         }
                         
-                        if (newObjectKey >= 0)
+                        if (newObjectKey >= 0 && lateSet)
                         {
-                            if(wasNull && !lateSet)
-                            { // this both ensures (via exception) that it *was* set, and makes sure we don't shout
-                                // about changed references
-                                oldValue = source.NetCache.GetKeyedObject(newObjectKey);
-                            }
-                            if (lateSet)
-                            {
-                                source.NetCache.SetKeyedObject(newObjectKey, value);
-                                if (newTypeKey >= 0) source.NetCache.SetKeyedObject(newTypeKey, type);
-                            }
+                            source.NetCache.SetKeyedObject(newObjectKey, value);
+                            if (newTypeKey >= 0) source.NetCache.SetKeyedObject(newTypeKey, type);
                         }
-                        if (newObjectKey >= 0 && !lateSet && !ReferenceEquals(oldValue, value))
+                        if (!lateSet && !ReferenceEquals(oldValue, value))
                         {
                             throw new ProtoException("A reference-tracked object changed reference during deserialization");
-                        }
-                        if (newObjectKey < 0 && newTypeKey >= 0)
-                        {  // have a new type, but not a new object
-                            source.NetCache.SetKeyedObject(newTypeKey, type);
-                        }
+                        }                        
                         break;
                     default:
                         source.SkipField();
                         break;
                 }
             }
-            if(newObjectKey >= 0 && (options & NetObjectOptions.AsReference) == 0)
-            {
-                throw new ProtoException("Object key in input stream, but reference-tracking was not expected");
-            }
             ProtoReader.EndSubItem(token, source);
 
             return value;
-#endif
         }
         /// <summary>
         /// Writes an *implementation specific* bundled .NET object, including (as options) type-metadata, identity/re-use, etc.
         /// </summary>
         public static void WriteNetObject(object value, ProtoWriter dest, int key, NetObjectOptions options)
         {
-#if FEAT_IKVM
-            throw new NotSupportedException();
-#else
             Helpers.DebugAssert(value != null);
             bool dynamicType = (options & NetObjectOptions.DynamicType) != 0,
                  asReference = (options & NetObjectOptions.AsReference) != 0;
@@ -508,12 +467,7 @@ namespace ProtoBuf
                 {
                     bool existing;
                     Type type = value.GetType();
-
-                    if (!(value is string))
-                    {
-                        key = dest.GetTypeKey(ref type);
-                        if (key < 0) throw new InvalidOperationException("Dynamic type is not a contract-type: " + type.Name);
-                    }
+                    key = dest.GetTypeKey(ref type);
                     int typeKey = dest.NetCache.AddObjectKey(type, out existing);
                     ProtoWriter.WriteFieldHeader(existing ? FieldExistingTypeKey : FieldNewTypeKey, WireType.Variant, dest);
                     ProtoWriter.WriteInt32(typeKey, dest);
@@ -534,7 +488,6 @@ namespace ProtoBuf
                 }
             }
             ProtoWriter.EndSubItem(token, dest);
-#endif
         }
     }
 }

@@ -1,14 +1,7 @@
-﻿#if !NO_RUNTIME
+﻿
 using System;
-using ProtoBuf.Meta;
-
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
 using System.Reflection;
-#endif
-
+using ProtoBuf.Meta;
 namespace ProtoBuf.Serializers
 {
     sealed class TupleSerializer : IProtoTypeSerializer
@@ -32,9 +25,9 @@ namespace ProtoBuf.Serializers
 
                 Type itemType = null, defaultType = null;
 
-                MetaType.ResolveListTypes(model, finalType, ref itemType, ref defaultType);
+                MetaType.ResolveListTypes(finalType, ref itemType, ref defaultType);
                 Type tmp = itemType == null ? finalType : itemType;
-                IProtoSerializer tail = ValueMember.TryGetCoreSerializer(model, DataFormat.Default, tmp, out wireType, false, false, false, true), serializer;
+                IProtoSerializer tail = ValueMember.TryGetCoreSerializer(model, DataFormat.Default, tmp, out wireType, false, false), serializer;
                 if (tail == null) throw new InvalidOperationException("No serializer defined for type: " + tmp.FullName);
 
                 tail = new TagDecorator(i + 1, wireType, false, tail);
@@ -46,11 +39,11 @@ namespace ProtoBuf.Serializers
                 {
                     if (finalType.IsArray)
                     {
-                        serializer = new ArrayDecorator(model, tail, i + 1, false, wireType, finalType, false, false);
+                        serializer = new ArrayDecorator(tail, i + 1, false, wireType, finalType, false);
                     }
                     else
                     {
-                        serializer = new ListDecorator(model, finalType, defaultType, tail, i + 1, false, wireType, true, false, false);
+                        serializer = new ListDecorator(finalType, defaultType, tail, i + 1, false, wireType, true, false);
                     }
                 }
                 tails[i] = serializer;
@@ -65,36 +58,38 @@ namespace ProtoBuf.Serializers
 #if FEAT_COMPILER
         public void EmitCallback(Compiler.CompilerContext ctx, Compiler.Local valueFrom, Meta.TypeModel.CallbackType callbackType){}
 #endif
-        public Type ExpectedType
+        public System.Type ExpectedType
         {
             get { return ctor.DeclaringType; }
         }
 
-
-        
-#if !FEAT_IKVM
+        public void Write(object value, ProtoWriter dest)
+        {
+            for(int i = 0 ; i < tails.Length ; i++)
+            {
+                object val = GetValue(value, i);
+                if(val != null) tails[i].Write(val, dest);
+            }
+        }
         private object GetValue(object obj, int index)
         {
-            PropertyInfo prop;
-            FieldInfo field;
-            
-            if ((prop = members[index] as PropertyInfo) != null)
+            switch (members[index].MemberType)
             {
-                if (obj == null)
-                    return Helpers.IsValueType(prop.PropertyType) ? Activator.CreateInstance(prop.PropertyType) : null;
-                return prop.GetValue(obj, null);
+                case MemberTypes.Field:
+                    FieldInfo field = (FieldInfo)members[index];
+                    if(obj == null)
+                        return field.FieldType.IsValueType ? Activator.CreateInstance(field.FieldType) : null;
+                    return field.GetValue(obj);
+                case MemberTypes.Property:
+                    PropertyInfo prop = (PropertyInfo)members[index];
+                    if (obj == null) return prop.PropertyType.IsValueType ? Activator.CreateInstance(prop.PropertyType) : null;
+                    return prop.GetValue(obj, null);
+                default:
+                    throw new InvalidOperationException();
             }
-            else if ((field = members[index] as FieldInfo) != null)
-            {
-                if (obj == null)
-                    return Helpers.IsValueType(field.FieldType) ? Activator.CreateInstance(field.FieldType) : null;
-                return field.GetValue(obj);
-            }
-            else
-            {
-                throw new InvalidOperationException();
-            }          
+           
         }
+
         public object Read(object value, ProtoReader source)
         {
             object[] values = new object[members.Length];
@@ -121,15 +116,7 @@ namespace ProtoBuf.Serializers
             }
             return invokeCtor ? ctor.Invoke(values) : value;
         }
-        public void Write(object value, ProtoWriter dest)
-        {
-            for (int i = 0; i < tails.Length; i++)
-            {
-                object val = GetValue(value, i);
-                if (val != null) tails[i].Write(val, dest);
-            }
-        }
-#endif
+
         public bool RequiresOldValue
         {
             get { return true; }
@@ -141,9 +128,15 @@ namespace ProtoBuf.Serializers
         }
         Type GetMemberType(int index)
         {
-            Type result = Helpers.GetMemberType(members[index]);
-            if (result == null) throw new InvalidOperationException();
-            return result;
+            switch (members[index].MemberType)
+            {
+                case MemberTypes.Field:
+                    return ((FieldInfo)members[index]).FieldType;
+                case MemberTypes.Property:
+                    return ((PropertyInfo)members[index]).PropertyType;
+                default:
+                    throw new InvalidOperationException();
+            }
         }
 #if FEAT_COMPILER
         public void EmitWrite(Compiler.CompilerContext ctx, Compiler.Local valueFrom)
@@ -178,44 +171,46 @@ namespace ProtoBuf.Serializers
                     for (int i = 0; i < locals.Length; i++)
                     {
                         Type type = GetMemberType(i);
-                        bool store = true;
+
                         locals[i] = new Compiler.Local(ctx, type);
                         if (!ExpectedType.IsValueType)
                         {
                             // value-types always read the old value
                             if (type.IsValueType)
                             {
-                                switch (Helpers.GetTypeCode(type))
+                                switch (Type.GetTypeCode(type))
                                 {
-                                    case ProtoTypeCode.Boolean:
-                                    case ProtoTypeCode.Byte:
-                                    case ProtoTypeCode.Int16:
-                                    case ProtoTypeCode.Int32:
-                                    case ProtoTypeCode.SByte:
-                                    case ProtoTypeCode.UInt16:
-                                    case ProtoTypeCode.UInt32:
+                                    case TypeCode.Boolean:
+                                    case TypeCode.Byte:
+                                    case TypeCode.Int16:
+                                    case TypeCode.Int32:
+                                    case TypeCode.SByte:
+                                    case TypeCode.UInt16:
+                                    case TypeCode.UInt32:
                                         ctx.LoadValue(0);
                                         break;
-                                    case ProtoTypeCode.Int64:
-                                    case ProtoTypeCode.UInt64:
+                                    case TypeCode.Int64:
+                                    case TypeCode.UInt64:
                                         ctx.LoadValue(0L);
                                         break;
-                                    case ProtoTypeCode.Single:
+                                    case TypeCode.Single:
                                         ctx.LoadValue(0.0F);
                                         break;
-                                    case ProtoTypeCode.Double:
+                                    case TypeCode.Double:
                                         ctx.LoadValue(0.0D);
                                         break;
-                                    case ProtoTypeCode.Decimal:
+                                    case TypeCode.Decimal:
                                         ctx.LoadValue(0M);
                                         break;
-                                    case ProtoTypeCode.Guid:
-                                        ctx.LoadValue(Guid.Empty);
-                                        break;
                                     default:
-                                        ctx.LoadAddress(locals[i], type);
-                                        ctx.EmitCtor(type);
-                                        store = false;
+                                        if (type == typeof (Guid))
+                                        {
+                                            ctx.LoadValue(Guid.Empty);
+                                        }
+                                        else
+                                        {
+                                            ctx.EmitCtor(type);
+                                        }
                                         break;
                                 }
                             }
@@ -223,10 +218,7 @@ namespace ProtoBuf.Serializers
                             {
                                 ctx.LoadNullRef();
                             }
-                            if (store)
-                            {
-                                ctx.StoreValue(locals[i]);
-                            }
+                            ctx.StoreValue(locals[i]);
                         }
                     }
 
@@ -255,7 +247,7 @@ namespace ProtoBuf.Serializers
 
                     if (!ExpectedType.IsValueType) ctx.MarkLabel(skipOld);
 
-                    using (Compiler.Local fieldNumber = new Compiler.Local(ctx, ctx.MapType(typeof (int))))
+                    using (Compiler.Local fieldNumber = new Compiler.Local(ctx, typeof (int)))
                     {
                         Compiler.CodeLabel @continue = ctx.DefineLabel(),
                                            processField = ctx.DefineLabel(),
@@ -307,10 +299,10 @@ namespace ProtoBuf.Serializers
 
                         ctx.MarkLabel(notRecognised);
                         ctx.LoadReaderWriter();
-                        ctx.EmitCall(ctx.MapType(typeof (ProtoReader)).GetMethod("SkipField"));
+                        ctx.EmitCall(typeof (ProtoReader).GetMethod("SkipField"));
 
                         ctx.MarkLabel(@continue);
-                        ctx.EmitBasicRead("ReadFieldHeader", ctx.MapType(typeof (int)));
+                        ctx.EmitBasicRead("ReadFieldHeader", typeof (int));
                         ctx.CopyValue();
                         ctx.StoreValue(fieldNumber);
                         ctx.LoadValue(0);
@@ -339,4 +331,3 @@ namespace ProtoBuf.Serializers
     }
 }
 
-#endif

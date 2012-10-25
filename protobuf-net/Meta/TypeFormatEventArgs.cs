@@ -47,7 +47,7 @@ namespace ProtoBuf.Meta
             this.formattedName = formattedName;
             typeFixed = false;
         }
-        internal TypeFormatEventArgs(System.Type type)
+        internal TypeFormatEventArgs(Type type)
         {
             if (type == null) throw new ArgumentNullException("type");
             this.type = type;

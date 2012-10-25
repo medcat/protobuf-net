@@ -38,22 +38,8 @@ namespace ProtoBuf
                         // note: Array.Resize not available on CF
                         int offset = buffer.Length;
                         byte[] tmp = new byte[offset + len];
-                        Helpers.BlockCopy(buffer, 0, tmp, 0, offset);
-
-#if PORTABLE || WINRT // no GetBuffer() - fine, we'll use Read instead
-                        int bytesRead;
-                        long oldPos = ms.Position;
-                        ms.Position = 0;
-                        while (len > 0 && (bytesRead = ms.Read(tmp, offset, len)) > 0)
-                        {
-                            len -= bytesRead;
-                            offset += bytesRead;
-                        }
-                        if(len != 0) throw new EndOfStreamException();
-                        ms.Position = oldPos;
-#else
-                        Helpers.BlockCopy(ms.GetBuffer(), 0, tmp, offset, len);
-#endif
+                        Buffer.BlockCopy(buffer, 0, tmp, 0, offset);
+                        Buffer.BlockCopy(ms.GetBuffer(), 0, tmp, offset, len);
                         buffer = tmp;
                     }
                 }

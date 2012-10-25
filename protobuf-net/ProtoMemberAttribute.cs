@@ -1,12 +1,5 @@
 ﻿using System;
 
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
-using System.Reflection;
-#endif
-
 namespace ProtoBuf
 {
     /// <summary>
@@ -54,7 +47,7 @@ namespace ProtoBuf
         }
 
 #if !NO_RUNTIME
-        internal MemberInfo Member;
+        internal System.Reflection.MemberInfo Member;
         internal bool TagIsPinned;
 #endif
         /// <summary>
@@ -193,7 +186,7 @@ namespace ProtoBuf
     /// fixed-length encoding for large values.
     /// </summary>
     [AttributeUsage(AttributeTargets.Class,
-            AllowMultiple = true, Inherited = false)]
+            AllowMultiple = true, Inherited = true)]
     public class ProtoPartialMemberAttribute : ProtoMemberAttribute
     {
         /// <summary>

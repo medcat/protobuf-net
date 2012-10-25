@@ -2,14 +2,6 @@
 using System;
 using ProtoBuf.Meta;
 
-#if FEAT_COMPILER
-#if FEAT_IKVM
-using IKVM.Reflection.Emit;
-using Type = IKVM.Reflection.Type;
-#else
-using System.Reflection.Emit;
-#endif
-#endif
 
 namespace ProtoBuf.Serializers
 {
@@ -25,12 +17,10 @@ namespace ProtoBuf.Serializers
             ((IProtoTypeSerializer)proxy.Serializer).EmitCallback(ctx, valueFrom, callbackType);
         }
 #endif
-#if !FEAT_IKVM
         void IProtoTypeSerializer.Callback(object value, TypeModel.CallbackType callbackType, SerializationContext context)
         {
             ((IProtoTypeSerializer)proxy.Serializer).Callback(value, callbackType, context);
         }
-#endif
 
         private readonly int key;
         private readonly Type type;
@@ -52,7 +42,6 @@ namespace ProtoBuf.Serializers
         bool IProtoSerializer.RequiresOldValue { get { return true; } }
         bool IProtoSerializer.ReturnsValue { get { return true; } }
 
-#if !FEAT_IKVM
         void IProtoSerializer.Write(object value, ProtoWriter dest)
         {
             if (recursionCheck)
@@ -68,17 +57,14 @@ namespace ProtoBuf.Serializers
         {
             return ProtoReader.ReadObject(value, key, source);
         }
-#endif
-
 #if FEAT_COMPILER
         bool EmitDedicatedMethod(Compiler.CompilerContext ctx, Compiler.Local valueFrom, bool read)
         {
-            MethodBuilder method = ctx.GetDedicatedMethod(key, read);
+            System.Reflection.Emit.MethodBuilder method = ctx.GetDedicatedMethod(key, read);
             if (method == null) return false;
-
-            using (Compiler.Local token = new ProtoBuf.Compiler.Local(ctx, ctx.MapType(typeof(SubItemToken))))
+            using (Compiler.Local token = new ProtoBuf.Compiler.Local(ctx, typeof(SubItemToken)))
             {
-                Type rwType = ctx.MapType(read ? typeof(ProtoReader) : typeof(ProtoWriter));
+                Type rwType = read ? typeof(ProtoReader) : typeof(ProtoWriter);
                 ctx.LoadValue(valueFrom);
                 if (!read) // write requires the object for StartSubItem; read doesn't
                 {  // (if recursion-check is disabled [subtypes] then null is fine too)
@@ -108,9 +94,9 @@ namespace ProtoBuf.Serializers
             {
                 ctx.LoadValue(valueFrom);
                 if (type.IsValueType) ctx.CastToObject(type);
-                ctx.LoadValue(ctx.MapMetaKeyToCompiledKey(key)); // re-map for formality, but would expect identical, else dedicated method
+                ctx.LoadValue(key);
                 ctx.LoadReaderWriter();
-                ctx.EmitCall(ctx.MapType(typeof(ProtoWriter)).GetMethod(recursionCheck ?  "WriteObject" : "WriteRecursionSafeObject"));
+                ctx.EmitCall(typeof(ProtoWriter).GetMethod(recursionCheck ?  "WriteObject" : "WriteRecursionSafeObject"));
             }
         }
         void IProtoSerializer.EmitRead(Compiler.CompilerContext ctx, Compiler.Local valueFrom)
@@ -119,9 +105,9 @@ namespace ProtoBuf.Serializers
             {
                 ctx.LoadValue(valueFrom);
                 if (type.IsValueType) ctx.CastToObject(type);
-                ctx.LoadValue(ctx.MapMetaKeyToCompiledKey(key)); // re-map for formality, but would expect identical, else dedicated method
+                ctx.LoadValue(key);
                 ctx.LoadReaderWriter();
-                ctx.EmitCall(ctx.MapType(typeof(ProtoReader)).GetMethod("ReadObject"));
+                ctx.EmitCall(typeof(ProtoReader).GetMethod("ReadObject"));
                 ctx.CastFromObject(type);
             }
         }

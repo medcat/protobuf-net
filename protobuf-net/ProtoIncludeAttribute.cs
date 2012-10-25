@@ -1,13 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
-
-using ProtoBuf.Meta;
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
 using System.Reflection;
-#endif
+
 namespace ProtoBuf
 {
     /// <summary>
@@ -24,7 +18,7 @@ namespace ProtoBuf
         /// </summary>
         /// <param name="tag">The unique index (within the type) that will identify this data.</param>
         /// <param name="knownType">The additional type to serialize/deserialize.</param>
-        public ProtoIncludeAttribute(int tag, System.Type knownType)
+        public ProtoIncludeAttribute(int tag, Type knownType)
             : this(tag, knownType == null ? "" : knownType.AssemblyQualifiedName) { }
 
         /// <summary>
@@ -59,9 +53,30 @@ namespace ProtoBuf
         {
             get
             {
-                return TypeModel.ResolveKnownType(KnownTypeName, null, null);
+                return ResolveKnownType(null);
             }
         }
+
+        internal Type ResolveKnownType(Assembly assembly)
+        {
+            if (Helpers.IsNullOrEmpty(KnownTypeName)) return null;
+            try
+            {
+                Type type = Type.GetType(KnownTypeName);
+                if (type != null) return type;
+            }
+            catch { }
+            try
+            {
+                int i = KnownTypeName.IndexOf(',');
+                string fullName = (i > 0 ? KnownTypeName.Substring(0, i) : KnownTypeName).Trim();
+                Type type = (assembly == null ? Assembly.GetCallingAssembly() : assembly).GetType(fullName);
+                if (type != null) return type;
+            }
+            catch { }
+            return null;
+        }
+
 
         /// <summary>
         /// Specifies whether the inherited sype's sub-message should be

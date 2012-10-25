@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using System.ServiceModel.Description;
-using System.Xml;
 using ProtoBuf.Meta;
 
 namespace ProtoBuf.ServiceModel
@@ -29,12 +28,7 @@ namespace ProtoBuf.ServiceModel
         /// <summary>
         /// Create a new ProtoOperationBehavior instance
         /// </summary>
-        public ProtoOperationBehavior(OperationDescription operation) : base(operation)
-        {
-#if !NO_RUNTIME
-            model = RuntimeTypeModel.Default;
-#endif
-        }
+        public ProtoOperationBehavior(OperationDescription operation) : base(operation) { model = RuntimeTypeModel.Default; }
         //public ProtoOperationBehavior(OperationDescription operation, DataContractFormatAttribute dataContractFormat) : base(operation, dataContractFormat) { }
 
         /// <summary>
@@ -42,8 +36,12 @@ namespace ProtoBuf.ServiceModel
         /// </summary>
         public override XmlObjectSerializer CreateSerializer(Type type, System.Xml.XmlDictionaryString name, System.Xml.XmlDictionaryString ns, IList<Type> knownTypes)
         {
-            if (model == null) throw new InvalidOperationException("No Model instance has been assigned to the ProtoOperationBehavior");
-            return XmlProtoSerializer.TryCreate(model, type) ?? base.CreateSerializer(type, name, ns, knownTypes);
+            int key = model.GetKey(ref type);
+            if (key >= 0)
+            {
+                return new XmlProtoSerializer(model, key);
+            }
+            return base.CreateSerializer(type, name, ns, knownTypes);
         }
     }
 }

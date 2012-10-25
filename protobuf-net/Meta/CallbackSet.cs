@@ -1,12 +1,7 @@
 ﻿#if !NO_RUNTIME
 using System;
-
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
 using System.Reflection;
-#endif
+
 
 namespace ProtoBuf.Meta
 {
@@ -35,23 +30,26 @@ namespace ProtoBuf.Meta
                 }
             }
         }
-        internal static bool CheckCallbackParameters(TypeModel model, MethodInfo method)
+        private MethodInfo beforeSerialize, afterSerialize, beforeDeserialize, afterDeserialize;
+        /// <summary>Called before serializing an instance</summary>
+        public MethodInfo BeforeSerialize
         {
-            ParameterInfo[] args = method.GetParameters();
-            return args.Length == 0
-                || (args.Length == 1 && (args[0].ParameterType == model.MapType(typeof(SerializationContext))
-#if PLAT_BINARYFORMATTER
-                || args[0].ParameterType == model.MapType(typeof(System.Runtime.Serialization.StreamingContext))
-#endif
-            ));
+            get { return beforeSerialize; }
+            set { beforeSerialize = SanityCheckCallback(value); }
         }
-        private MethodInfo SanityCheckCallback(TypeModel model, MethodInfo callback)
+        private MethodInfo SanityCheckCallback(MethodInfo callback)
         {
             metaType.ThrowIfFrozen();
             if (callback == null) return callback; // fine
             if (callback.IsStatic) throw new ArgumentException("Callbacks cannot be static", "callback");
-            if (callback.ReturnType != model.MapType(typeof(void))
-                || !CheckCallbackParameters(model, callback))
+            ParameterInfo[] args = callback.GetParameters();
+            if (callback.ReturnType == typeof(void) && (args.Length == 0
+                || (args.Length == 1 && (args[0].ParameterType == typeof(SerializationContext)
+#if PLAT_BINARYFORMATTER
+                || args[0].ParameterType == typeof(System.Runtime.Serialization.StreamingContext)
+#endif
+            )))) { }
+            else
             {
                 throw CreateInvalidCallbackSignature(callback);
             }
@@ -59,32 +57,25 @@ namespace ProtoBuf.Meta
         }
         internal static Exception CreateInvalidCallbackSignature(MethodInfo method)
         {
-            return new NotSupportedException("Invalid callback signature in " + method.DeclaringType.FullName + "." + method.Name);
-        }
-        private MethodInfo beforeSerialize, afterSerialize, beforeDeserialize, afterDeserialize;
-        /// <summary>Called before serializing an instance</summary>
-        public MethodInfo BeforeSerialize
-        {
-            get { return beforeSerialize; }
-            set { beforeSerialize = SanityCheckCallback(metaType.Model, value); }
+            return new NotSupportedException("Invalid callback signature in " + method.DeclaringType.Name + "." + method.Name);
         }
         /// <summary>Called before deserializing an instance</summary>
         public MethodInfo BeforeDeserialize
         {
             get { return beforeDeserialize; }
-            set { beforeDeserialize = SanityCheckCallback(metaType.Model, value); }
+            set { beforeDeserialize = SanityCheckCallback(value); }
         }
         /// <summary>Called after serializing an instance</summary>
         public MethodInfo AfterSerialize
         {
             get { return afterSerialize; }
-            set { afterSerialize = SanityCheckCallback(metaType.Model, value); }
+            set { afterSerialize = SanityCheckCallback(value); }
         }
         /// <summary>Called after deserializing an instance</summary>
         public MethodInfo AfterDeserialize
         {
             get { return afterDeserialize; }
-            set { afterDeserialize = SanityCheckCallback(metaType.Model, value); }
+            set { afterDeserialize = SanityCheckCallback(value); }
         }
         /// <summary>
         /// True if any callback is set, else False

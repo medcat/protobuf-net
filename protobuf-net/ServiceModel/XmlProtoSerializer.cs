@@ -1,7 +1,6 @@
 ﻿#if (FEAT_SERVICEMODEL && PLAT_XMLSERIALIZER) || (SILVERLIGHT && !PHONE7)
 using System.IO;
 using System.Runtime.Serialization;
-using System.Xml;
 using ProtoBuf.Meta;
 using System;
 
@@ -14,17 +13,12 @@ namespace ProtoBuf.ServiceModel
     {
         private readonly TypeModel model;
         private readonly int key;
-        private readonly bool isList;
-        private readonly Type type;
-        internal XmlProtoSerializer(TypeModel model, int key, Type type, bool isList)
+        internal XmlProtoSerializer(TypeModel model, int key)
         {
             if (model == null) throw new ArgumentNullException("model");
             if (key < 0) throw new ArgumentOutOfRangeException("key");
-            if (type == null) throw new ArgumentOutOfRangeException("type");
             this.model = model;
             this.key = key;
-            this.isList = isList;
-            this.type = type;
         }
         /// <summary>
         /// Attempt to create a new serializer for the given model and type
@@ -34,53 +28,19 @@ namespace ProtoBuf.ServiceModel
         {
             if (model == null) throw new ArgumentNullException("model");
             if (type == null) throw new ArgumentNullException("type");
-
-            bool isList;
-            int key = GetKey(model, ref type, out isList);
-            if (key >= 0)
-            {
-                return new XmlProtoSerializer(model, key, type, isList);
-            }
-            return null;
+            int key = GetKey(model, type);
+            if (key < 0) return null;
+            return new XmlProtoSerializer(model, key);
         }
         /// <summary>
         /// Creates a new serializer for the given model and type
         /// </summary>
-        public XmlProtoSerializer(TypeModel model, Type type)
+        public XmlProtoSerializer(TypeModel model, Type type) : this(model, GetKey(model, type))
         {
-            if (model == null) throw new ArgumentNullException("model");
-            if (type == null) throw new ArgumentNullException("type");
-
-            key = GetKey(model, ref type, out isList);
-            this.model = model;
-            this.type = type;
-            if (key < 0) throw new ArgumentOutOfRangeException("type", "Type not recognised by the model: " + type.FullName);
         }
-        static int GetKey(TypeModel model, ref Type type, out bool isList)
+        static int GetKey(TypeModel model, Type type)
         {
-            if (model != null && type != null)
-            {
-                int key = model.GetKey(ref type);
-                if (key >= 0)
-                {
-                    isList = false;
-                    return key;
-                }
-                Type itemType = TypeModel.GetListItemType(model, type);
-                if (itemType != null)
-                {
-                    key = model.GetKey(ref itemType);
-                    if (key >= 0)
-                    {
-                        isList = true;
-                        return key;
-                    }
-                }
-            }
-
-            isList = false;
-            return -1;
-            
+            return model == null ? -1 : model.GetKey(ref type);
         }
         /// <summary>
         /// Ends an object in the output
@@ -96,7 +56,7 @@ namespace ProtoBuf.ServiceModel
         {
             writer.WriteStartElement(PROTO_ELEMENT);
         }
-        private const string PROTO_ELEMENT = "proto";
+        const string PROTO_ELEMENT = "proto";
         /// <summary>
         /// Writes the body of an object in the output
         /// </summary>
@@ -110,78 +70,45 @@ namespace ProtoBuf.ServiceModel
             {
                 using (MemoryStream ms = new MemoryStream())
                 {
-                    if (isList)
+                    using (ProtoWriter protoWriter = new ProtoWriter(ms, model, null))
                     {
-                        model.Serialize(ms, graph, null);
-                    }
-                    else
-                    {
-                        using (ProtoWriter protoWriter = new ProtoWriter(ms, model, null))
-                        {
-                            model.Serialize(key, graph, protoWriter);
-                        }
+                        model.Serialize(key, graph, protoWriter);
                     }
                     byte[] buffer = ms.GetBuffer();
                     writer.WriteBase64(buffer, 0, (int)ms.Length);
                 }
             }
         }
-
         /// <summary>
         /// Indicates whether this is the start of an object we are prepared to handle
         /// </summary>
         public override bool IsStartObject(System.Xml.XmlDictionaryReader reader)
         {
-            reader.MoveToContent();
             return reader.NodeType == System.Xml.XmlNodeType.Element && reader.Name == PROTO_ELEMENT;
         }
-
         /// <summary>
         /// Reads the body of an object
         /// </summary>
         public override object ReadObject(System.Xml.XmlDictionaryReader reader, bool verifyObjectName)
         {
-            reader.MoveToContent();
-            bool isSelfClosed = reader.IsEmptyElement, isNil = reader.GetAttribute("nil") == "true";
+            if (reader.GetAttribute("nil") == "true") return null;
             reader.ReadStartElement(PROTO_ELEMENT);
-
-            // explicitly null
-            if (isNil)
+            try
             {
-                if(!isSelfClosed) reader.ReadEndElement();
-                return null;
-            }
-            if(isSelfClosed) // no real content
-            {
-                if (isList)
-                {
-                    return model.Deserialize(Stream.Null, null, type, null);
-                }
-                using (ProtoReader protoReader = new ProtoReader(Stream.Null, model, null))
-                {
-                    return model.Deserialize(key, null, protoReader);
-                }
-            }
-
-            object result;
-            Helpers.DebugAssert(reader.CanReadBinaryContent, "CanReadBinaryContent");
-            using (MemoryStream ms = new MemoryStream(reader.ReadContentAsBase64()))
-            {
-                if (isList)
-                {
-                    result = model.Deserialize(ms, null, type, null);
-                }
-                else
+                using (MemoryStream ms = new MemoryStream(reader.ReadContentAsBase64()))
                 {
                     using (ProtoReader protoReader = new ProtoReader(ms, model, null))
-                    {
-                        result = model.Deserialize(key, null, protoReader);
+                    { 
+                        return model.Deserialize(key, null, protoReader);
                     }
                 }
             }
-            reader.ReadEndElement();
-            return result;
+            finally
+            {
+                reader.ReadEndElement();
+            }
         }
+
     }
 }
 #endif

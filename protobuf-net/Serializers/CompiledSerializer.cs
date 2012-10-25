@@ -1,4 +1,4 @@
-﻿#if FEAT_COMPILER && !(FX11 || FEAT_IKVM)
+﻿#if FEAT_COMPILER && !FX11
 using System;
 using ProtoBuf.Meta;
 
@@ -16,12 +16,12 @@ namespace ProtoBuf.Serializers
         {
             head.Callback(value, callbackType, context); // these routes only used when bits of the model not compiled
         }
-        public static CompiledSerializer Wrap(IProtoTypeSerializer head, TypeModel model)
+        public static CompiledSerializer Wrap(IProtoTypeSerializer head)
         {
             CompiledSerializer result = head as CompiledSerializer;
             if (result == null)
             {
-                result = new CompiledSerializer(head, model);
+                result = new CompiledSerializer(head);
                 Helpers.DebugAssert(((IProtoTypeSerializer)result).ExpectedType == head.ExpectedType);
             }
             return result;
@@ -29,11 +29,11 @@ namespace ProtoBuf.Serializers
         private readonly IProtoTypeSerializer head;
         private readonly Compiler.ProtoSerializer serializer;
         private readonly Compiler.ProtoDeserializer deserializer;
-        private CompiledSerializer(IProtoTypeSerializer head, TypeModel model)
+        private CompiledSerializer(IProtoTypeSerializer head)
         {
             this.head = head;
-            serializer = Compiler.CompilerContext.BuildSerializer(head, model);
-            deserializer = Compiler.CompilerContext.BuildDeserializer(head, model);
+            serializer = Compiler.CompilerContext.BuildSerializer(head);
+            deserializer = Compiler.CompilerContext.BuildDeserializer(head);
         }
         bool IProtoSerializer.RequiresOldValue { get { return head.RequiresOldValue; } }
         bool IProtoSerializer.ReturnsValue { get { return head.ReturnsValue; } }

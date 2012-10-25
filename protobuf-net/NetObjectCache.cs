@@ -7,16 +7,12 @@ namespace ProtoBuf
     internal sealed class NetObjectCache
     {
         internal const int Root = 0;
-        private MutableList underlyingList;
+        private BasicList underlyingList;
 
-        private MutableList List
-        {
-            get
-            {
-                if (underlyingList == null) underlyingList = new MutableList();
-                return underlyingList;
-            }
-        }
+        private BasicList List { get {
+            if (underlyingList == null) underlyingList = new BasicList();
+            return underlyingList;
+        } }
 
 
         internal object GetKeyedObject(int key)
@@ -33,10 +29,8 @@ namespace ProtoBuf
                 Helpers.DebugWriteLine("Missing key: " + key);
                 throw new ProtoException("Internal error; a missing key occurred");
             }
-
-            object tmp = list[key];
-            if(tmp == null) throw new ProtoException("A deferred key does not have a value yet");
-            return tmp;
+            
+            return list[key];
         }
 
         internal void SetKeyedObject(int key, object value)
@@ -49,18 +43,10 @@ namespace ProtoBuf
             }
             else
             {
-                MutableList list = List;
+                BasicList list = List;
                 if (key < list.Count)
                 {
-                    object oldVal = list[key];
-                    if (oldVal == null)
-                    {
-                        list[key] = value;
-                    }
-                    else if (!ReferenceEquals(oldVal, value) )
-                    {
-                        throw new ProtoException("Reference-tracked objects cannot change reference");
-                    } // otherwise was the same; nothing to do
+                    if (!ReferenceEquals(list[key], value)) throw new ProtoException("Reference-tracked objects cannot change reference");
                 }
                 else if (key != list.Add(value))
                 {
@@ -68,7 +54,18 @@ namespace ProtoBuf
                 }
             }
         }
-
+        //class StringMatch : BasicList.IPredicate
+        //{
+        //    private readonly string value;
+        //    public StringMatch(string value) {
+        //        this.value = value;
+        //    }
+        //    public bool IsMatch(object obj)
+        //    {
+        //        string s;
+        //        return (s = obj as string) != null && s == value;
+        //    }
+        //}
         private object rootObject;
         internal int AddObjectKey(object value, out bool existing)
         {
@@ -83,9 +80,9 @@ namespace ProtoBuf
             string s = value as string;
             BasicList list = List;
             int index;
-
-#if NO_GENERICS
             
+#if NO_GENERICS
+            //index = s == null ? list.IndexOfReference(value) : list.IndexOf(new StringMatch(s));
             if(s == null)
             {
                 if (objectKeys == null)
@@ -116,9 +113,6 @@ namespace ProtoBuf
 
             if(s == null)
             {
-#if CF || PORTABLE // CF has very limited proper object ref-tracking; so instead, we'll search it the hard way
-                index = list.IndexOfReference(value);
-#else
                 if (objectKeys == null) 
                 {
                     objectKeys = new System.Collections.Generic.Dictionary<object, int>(ReferenceComparer.Default);
@@ -128,7 +122,6 @@ namespace ProtoBuf
                 {
                     if (!objectKeys.TryGetValue(value, out index)) index = -1;
                 }
-#endif
             }
             else
             {
@@ -150,9 +143,7 @@ namespace ProtoBuf
 
                 if (s == null)
                 {
-#if !CF && !PORTABLE // CF can't handle the object keys very well
                     objectKeys.Add(value, index);
-#endif
                 }
                 else
                 {
@@ -162,33 +153,9 @@ namespace ProtoBuf
             return index + 1;
         }
 
-        private int trapStartIndex; // defaults to 0 - optimization for RegisterTrappedObject
-                                    // to make it faster at seeking to find deferred-objects
-
-        internal void RegisterTrappedObject(object value)
+        internal void ProposeRoot(object value)
         {
-            if (rootObject == null)
-            {
-                rootObject = value;
-            }
-            else
-            {
-                if(underlyingList != null)
-                {
-                    for (int i = trapStartIndex; i < underlyingList.Count; i++)
-                    {
-                        trapStartIndex = i + 1; // things never *become* null; whether or
-                                                // not the next item is null, it will never
-                                                // need to be checked again
-
-                        if(underlyingList[i] == null)
-                        {
-                            underlyingList[i] = value;    
-                            break;
-                        }
-                    }
-                }
-            }
+            if (rootObject == null) rootObject = value;
         }
 #if NO_GENERICS
         private ReferenceHashtable objectKeys;
@@ -205,11 +172,8 @@ namespace ProtoBuf
             }
         }   
 #else
-
-        private System.Collections.Generic.Dictionary<string, int> stringKeys;
-
-#if !CF && !PORTABLE // CF lacks the ability to get a robust reference-based hash-code, so we'll do it the harder way instead
         private System.Collections.Generic.Dictionary<object, int> objectKeys;
+        private System.Collections.Generic.Dictionary<string, int> stringKeys;
         private sealed class ReferenceComparer : System.Collections.Generic.IEqualityComparer<object>
         {
             public readonly static ReferenceComparer Default = new ReferenceComparer();
@@ -225,7 +189,6 @@ namespace ProtoBuf
                 return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
             }
         }
-#endif
 
 #endif
     }

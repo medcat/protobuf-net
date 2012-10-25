@@ -1,13 +1,7 @@
 ﻿#if !NO_RUNTIME
 using System;
-using ProtoBuf.Meta;
-
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
 using System.Reflection;
-#endif
+using ProtoBuf.Meta;
 
 namespace ProtoBuf.Serializers
 {
@@ -17,9 +11,7 @@ namespace ProtoBuf.Serializers
 #if FEAT_COMPILER
         void IProtoTypeSerializer.EmitCallback(Compiler.CompilerContext ctx, Compiler.Local valueFrom, ProtoBuf.Meta.TypeModel.CallbackType callbackType) { }
 #endif
-#if !FEAT_IKVM
         void IProtoTypeSerializer.Callback(object value, ProtoBuf.Meta.TypeModel.CallbackType callbackType, SerializationContext context) { }
-#endif
         public bool ReturnsValue { get { return false; } }
         public bool RequiresOldValue { get { return true; } }
         public Type ExpectedType { get { return forType; } }
@@ -34,7 +26,7 @@ namespace ProtoBuf.Serializers
             Helpers.DebugAssert(rootTail != null, "rootTail");
             Helpers.DebugAssert(rootTail.RequiresOldValue, "RequiresOldValue");
             Helpers.DebugAssert(!rootTail.ReturnsValue, "ReturnsValue");
-            Helpers.DebugAssert(declaredType == rootTail.ExpectedType || Helpers.IsSubclassOf(declaredType, rootTail.ExpectedType));
+            Helpers.DebugAssert(declaredType == rootTail.ExpectedType || declaredType.IsSubclassOf(rootTail.ExpectedType));
             this.forType = forType;
             this.declaredType = declaredType;
             this.rootTail = rootTail;
@@ -43,17 +35,8 @@ namespace ProtoBuf.Serializers
         }
         private static bool HasCast(Type type, Type from, Type to, out MethodInfo op)
         {
-#if WINRT
-            System.Collections.Generic.List<MethodInfo> list = new System.Collections.Generic.List<MethodInfo>();
-            foreach (var item in type.GetRuntimeMethods())
-            {
-                if (item.IsStatic) list.Add(item);
-            }
-            MethodInfo[] found = list.ToArray();
-#else
             const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
             MethodInfo[] found = type.GetMethods(flags);
-#endif
             for(int i = 0 ; i < found.Length ; i++)
             {
                 MethodInfo m = found[i];
@@ -85,7 +68,7 @@ namespace ProtoBuf.Serializers
                 forType.FullName + " / " + declaredType.FullName);
         }
 
-#if !FEAT_IKVM
+
         public void Write(object value, ProtoWriter writer)
         {
             rootTail.Write(toTail.Invoke(null, new object[] { value }), writer);
@@ -100,8 +83,6 @@ namespace ProtoBuf.Serializers
             args[0] = rootTail.Read(value, source);
             return fromTail.Invoke(null, args);
         }
-#endif
-
 #if FEAT_COMPILER
         void IProtoSerializer.EmitRead(Compiler.CompilerContext ctx, Compiler.Local valueFrom)
         {

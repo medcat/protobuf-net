@@ -5,14 +5,6 @@ using System.IO;
 #if !NO_GENERICS
 using System.Collections.Generic;
 #endif
-
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
-using System.Reflection;
-#endif
-
 namespace ProtoBuf
 {
     /// <summary>
@@ -44,7 +36,7 @@ namespace ProtoBuf
         /// <returns>The .proto definition as a string</returns>
         public static string GetProto<T>()
         {
-            return RuntimeTypeModel.Default.GetSchema(RuntimeTypeModel.Default.MapType(typeof(T)));
+            throw new NotImplementedException();//TODO: NotImplementedException
         }
         /// <summary>
         /// Create a deep clone of the supplied instance; any sub-items are also cloned.
@@ -107,7 +99,7 @@ namespace ProtoBuf
                 return Deserialize<TTo>(ms);
             }
         }
-#if PLAT_BINARYFORMATTER && !WINRT
+#if PLAT_BINARYFORMATTER
         /// <summary>
         /// Writes a protocol-buffer representation of the given instance to the supplied SerializationInfo.
         /// </summary>
@@ -191,7 +183,7 @@ namespace ProtoBuf
 #endif
 
         private const string ProtoBinaryField = "proto";
-#if PLAT_BINARYFORMATTER && !NO_GENERICS && !WINRT
+#if PLAT_BINARYFORMATTER && !NO_GENERICS
         /// <summary>
         /// Applies a protocol-buffer from a SerializationInfo to an existing instance.
         /// </summary>
@@ -232,28 +224,21 @@ namespace ProtoBuf
         /// <summary>
         /// Precompiles the serializer for a given type.
         /// </summary>
-        public static void PrepareSerializer<T>()
+        public static void PrepareSerializer<T>() where T : class
         { 
 #if FEAT_COMPILER
-            RuntimeTypeModel model = RuntimeTypeModel.Default;
-            model[model.MapType(typeof(T))].CompileInPlace();
+            RuntimeTypeModel.Default[typeof(T)].CompileInPlace();
 #endif
         }
 
-#if PLAT_BINARYFORMATTER && !WINRT
+#if PLAT_BINARYFORMATTER
         /// <summary>
         /// Creates a new IFormatter that uses protocol-buffer [de]serialization.
         /// </summary>
         /// <typeparam name="T">The type of object to be [de]deserialized by the formatter.</typeparam>
         /// <returns>A new IFormatter to be used during [de]serialization.</returns>
         public static System.Runtime.Serialization.IFormatter CreateFormatter<T>()
-        {
-#if FEAT_IKVM
-            throw new NotSupportedException();
-#else
-            return RuntimeTypeModel.Default.CreateFormatter(typeof(T));
-#endif
-        }
+        { return RuntimeTypeModel.Default.CreateFormatter(typeof(T)); }
 #endif
         /// <summary>
         /// Reads a sequence of consecutive length-prefixed items from a stream, using
@@ -299,8 +284,7 @@ namespace ProtoBuf
         /// <returns>A new, initialized instance.</returns>
         public static T DeserializeWithLengthPrefix<T>(Stream source, PrefixStyle style, int fieldNumber)
         {
-            RuntimeTypeModel model = RuntimeTypeModel.Default;
-            return (T)model.DeserializeWithLengthPrefix(source, null, model.MapType(typeof(T)), style, fieldNumber);
+            return (T)RuntimeTypeModel.Default.DeserializeWithLengthPrefix(source, null, typeof(T), style, fieldNumber);
         }
 
         /// <summary>
@@ -316,8 +300,7 @@ namespace ProtoBuf
         /// original instance.</returns>
         public static T MergeWithLengthPrefix<T>(Stream source, T instance, PrefixStyle style)
         {
-            RuntimeTypeModel model = RuntimeTypeModel.Default;
-            return (T)model.DeserializeWithLengthPrefix(source, instance, model.MapType(typeof(T)), style, 0);
+            return (T)RuntimeTypeModel.Default.DeserializeWithLengthPrefix(source, instance, typeof(T), style, 0);
         }
 
         /// <summary>
@@ -348,8 +331,7 @@ namespace ProtoBuf
         /// <param name="fieldNumber">The tag used as a prefix to each record (only used with base-128 style prefixes).</param>
         public static void SerializeWithLengthPrefix<T>(Stream destination, T instance, PrefixStyle style, int fieldNumber)
         {
-            RuntimeTypeModel model = RuntimeTypeModel.Default;
-            model.SerializeWithLengthPrefix(destination, instance, model.MapType(typeof(T)), style, fieldNumber);
+            RuntimeTypeModel.Default.SerializeWithLengthPrefix(destination, instance, typeof(T), style, fieldNumber);
         }
 #endif
         /// <summary>Indicates the number of bytes expected for the next message.</summary>
@@ -429,21 +411,10 @@ namespace ProtoBuf
             /// <param name="type">The type to be created.</param>
             /// <param name="source">The binary stream to apply to the new instance (cannot be null).</param>
             /// <returns>A new, initialized instance.</returns>
-            public static object Deserialize(System.Type type, Stream source)
+            public static object Deserialize(Type type, Stream source)
             {
                 return RuntimeTypeModel.Default.Deserialize(source, null, type);
             }
-
-            /// <summary>Applies a protocol-buffer stream to an existing instance.</summary>
-            /// <param name="instance">The existing instance to be modified (cannot be null).</param>
-            /// <param name="source">The binary stream to apply to the instance (cannot be null).</param>
-            /// <returns>The updated instance</returns>
-            public static object Merge(Stream source, object instance)
-            {
-                if (instance == null) throw new ArgumentNullException("instance");
-                return RuntimeTypeModel.Default.Deserialize(source, instance, instance.GetType(), null);
-            }
-
             /// <summary>
             /// Writes a protocol-buffer representation of the given instance to the supplied stream,
             /// with a length-prefix. This is useful for socket programming,
@@ -456,8 +427,7 @@ namespace ProtoBuf
             /// <param name="fieldNumber">The tag used as a prefix to each record (only used with base-128 style prefixes).</param>
             public static void SerializeWithLengthPrefix(Stream destination, object instance, PrefixStyle style, int fieldNumber)
             {
-                RuntimeTypeModel model = RuntimeTypeModel.Default;
-                model.SerializeWithLengthPrefix(destination, instance, model.MapType(instance.GetType()), style, fieldNumber);
+                RuntimeTypeModel.Default.SerializeWithLengthPrefix(destination, instance, instance.GetType(), style, fieldNumber);
             }
             /// <summary>
             /// Applies a protocol-buffer stream to an existing instance (or null), using length-prefixed
@@ -515,15 +485,5 @@ namespace ProtoBuf
         /// Maps a field-number to a type
         /// </summary>
         public delegate Type TypeResolver(int fieldNumber);
-
-        /// <summary>
-        /// Releases any internal buffers that have been reserved for efficiency; this does not affect any serialization
-        /// operations; simply: it can be used (optionally) to release the buffers for garbage collection (at the expense
-        /// of having to re-allocate a new buffer for the next operation, rather than re-use prior buffers).
-        /// </summary>
-        public static void FlushPool()
-        {
-            BufferPool.Flush();
-        }
     }
 }

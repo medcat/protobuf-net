@@ -1,14 +1,8 @@
 ﻿#if !NO_RUNTIME
 using System;
 using System.Collections;
-using ProtoBuf.Meta;
-
-#if FEAT_IKVM
-using Type = IKVM.Reflection.Type;
-using IKVM.Reflection;
-#else
 using System.Reflection;
-#endif
+using ProtoBuf.Meta;
 
 namespace ProtoBuf.Serializers
 {
@@ -28,13 +22,11 @@ namespace ProtoBuf.Serializers
             }
         }
         private readonly byte options;
-
         private const byte OPTIONS_IsList = 1,
                            OPTIONS_SuppressIList = 2,
                            OPTIONS_WritePacked = 4,
                            OPTIONS_ReturnList = 8,
-                           OPTIONS_OverwriteList = 16,
-                           OPTIONS_SupportNull = 32;
+                           OPTIONS_OverwriteList = 16;
 
         private readonly Type declaredType, concreteType;
 
@@ -45,16 +37,13 @@ namespace ProtoBuf.Serializers
         private bool IsList { get { return (options & OPTIONS_IsList) != 0; } }
         private bool SuppressIList { get { return (options & OPTIONS_SuppressIList) != 0; } }
         private bool WritePacked { get { return (options & OPTIONS_WritePacked) != 0; } }
-        private bool SupportNull { get { return (options & OPTIONS_SupportNull) != 0; } }
         private bool ReturnList { get { return (options & OPTIONS_ReturnList) != 0; } }
         private readonly WireType packedWireType;
 
-        public ListDecorator(TypeModel model, Type declaredType, Type concreteType, IProtoSerializer tail, int fieldNumber, bool writePacked, WireType packedWireType, bool returnList, bool overwriteList, bool supportNull)
-            : base(tail)
+        public ListDecorator(Type declaredType, Type concreteType, IProtoSerializer tail, int fieldNumber, bool writePacked, WireType packedWireType, bool returnList, bool overwriteList) : base(tail)
         {
             if (returnList) options |= OPTIONS_ReturnList;
             if (overwriteList) options |= OPTIONS_OverwriteList;
-            if (supportNull) options |= OPTIONS_SupportNull;
             if ((writePacked || packedWireType != WireType.None) && fieldNumber <= 0) throw new ArgumentOutOfRangeException("fieldNumber");
             if (!CanPack(packedWireType))
             {
@@ -72,17 +61,16 @@ namespace ProtoBuf.Serializers
             
             // look for a public list.Add(typedObject) method
             bool isList;
-            add = TypeModel.ResolveListAdd(model, declaredType, tail.ExpectedType, out isList);
+            add = TypeModel.ResolveListAdd(declaredType, tail.ExpectedType, out isList);
             if (isList)
             {
                 options |= OPTIONS_IsList;
-                string fullName = declaredType.FullName;
-                if (fullName != null && fullName.StartsWith("System.Data.Linq.EntitySet`1[["))
+                if (declaredType.FullName.StartsWith("System.Data.Linq.EntitySet`1[["))
                 { // see http://stackoverflow.com/questions/6194639/entityset-is-there-a-sane-reason-that-ilist-add-doesnt-set-assigned
                     options |= OPTIONS_SuppressIList;
                 }
             }
-            if (add == null) throw new InvalidOperationException("Unable to resolve a suitable Add method for " + declaredType.FullName);
+            if (add == null) throw new InvalidOperationException();
         }
 
         public override Type ExpectedType { get { return declaredType;  } }
@@ -159,7 +147,7 @@ namespace ProtoBuf.Serializers
 
         internal static void EmitReadList(ProtoBuf.Compiler.CompilerContext ctx, Compiler.Local list, IProtoSerializer tail, MethodInfo add, WireType packedWireType)
         {
-            using (Compiler.Local fieldNumber = new Compiler.Local(ctx, ctx.MapType(typeof(int))))
+            using (Compiler.Local fieldNumber = new Compiler.Local(ctx, typeof(int)))
             {
                 Compiler.CodeLabel readPacked = packedWireType == WireType.None ? new Compiler.CodeLabel() : ctx.DefineLabel();                                   
                 if (packedWireType != WireType.None)
@@ -180,7 +168,7 @@ namespace ProtoBuf.Serializers
 
                 ctx.LoadReaderWriter();
                 ctx.LoadValue(fieldNumber);
-                ctx.EmitCall(ctx.MapType(typeof(ProtoReader)).GetMethod("TryReadFieldHeader"));
+                ctx.EmitCall(typeof(ProtoReader).GetMethod("TryReadFieldHeader"));
                 ctx.BranchIfTrue(@continue, false);
 
                 if (packedWireType != WireType.None)
@@ -190,13 +178,13 @@ namespace ProtoBuf.Serializers
                     ctx.MarkLabel(readPacked);
 
                     ctx.LoadReaderWriter();
-                    ctx.EmitCall(ctx.MapType(typeof(ProtoReader)).GetMethod("StartSubItem"));
+                    ctx.EmitCall(typeof(ProtoReader).GetMethod("StartSubItem"));
 
                     Compiler.CodeLabel testForData = ctx.DefineLabel(), noMoreData = ctx.DefineLabel();
                     ctx.MarkLabel(testForData);
                     ctx.LoadValue((int)packedWireType);
                     ctx.LoadReaderWriter();
-                    ctx.EmitCall(ctx.MapType(typeof(ProtoReader)).GetMethod("HasSubValue"));
+                    ctx.EmitCall(typeof(ProtoReader).GetMethod("HasSubValue"));
                     ctx.BranchIfFalse(noMoreData, false);
 
                     EmitReadAndAddItem(ctx, list, tail, add);
@@ -204,7 +192,7 @@ namespace ProtoBuf.Serializers
 
                     ctx.MarkLabel(noMoreData);
                     ctx.LoadReaderWriter();
-                    ctx.EmitCall(ctx.MapType(typeof(ProtoReader)).GetMethod("EndSubItem"));
+                    ctx.EmitCall(typeof(ProtoReader).GetMethod("EndSubItem"));
                     ctx.MarkLabel(allDone);
                 }
 
@@ -260,111 +248,62 @@ namespace ProtoBuf.Serializers
                 
             Type addParamType = add.GetParameters()[0].ParameterType;
             if(addParamType != itemType) {
-                if (addParamType == ctx.MapType(typeof(object)))
+                if (addParamType == typeof(object))
                 {
                     ctx.CastToObject(itemType);
                 }
-#if !NO_GENERICS
-                else if(Helpers.GetUnderlyingType(addParamType) == itemType)
-                { // list is nullable
-                    ConstructorInfo ctor = Helpers.GetConstructor(addParamType, new Type[] {itemType}, false);
-                    ctx.EmitCtor(ctor); // the itemType on the stack is now a Nullable<ItemType>
-                }
-#endif
                 else
                 {
                     throw new InvalidOperationException("Conflicting item/add type");
                 }
             }
             ctx.EmitCall(add);
-            if (add.ReturnType != ctx.MapType(typeof(void)))
+            if (add.ReturnType != typeof(void))
             {
                 ctx.DiscardValue();
             }
         }
 #endif
-
-#if WINRT
-        private static readonly TypeInfo ienumeratorType = typeof(IEnumerator).GetTypeInfo(), ienumerableType = typeof (IEnumerable).GetTypeInfo();
-#else
-        private static readonly System.Type ienumeratorType = typeof (IEnumerator), ienumerableType = typeof (IEnumerable);
-#endif
-        MethodInfo GetEnumeratorInfo(TypeModel model, out MethodInfo moveNext, out MethodInfo current)
+        MethodInfo GetEnumeratorInfo(out MethodInfo moveNext, out MethodInfo current)
         {
-            
-#if WINRT
-            TypeInfo enumeratorType = null, iteratorType, expectedType = ExpectedType.GetTypeInfo();
-#else
-            Type enumeratorType = null, iteratorType, expectedType = ExpectedType;
-#endif
-
-            // try a custom enumerator
-            MethodInfo getEnumerator = Helpers.GetInstanceMethod(expectedType, "GetEnumerator", null);
-            Type itemType = Tail.ExpectedType;
+            MethodInfo getEnumerator = Helpers.GetInstanceMethod(ExpectedType,"GetEnumerator",null);
+            Type iteratorType, itemType = Tail.ExpectedType;
             
             if (getEnumerator != null)
             {
-                iteratorType = getEnumerator.ReturnType
-#if WINRT
-                    .GetTypeInfo()
-#endif
-                    ;
+                iteratorType = getEnumerator.ReturnType;
                 moveNext = Helpers.GetInstanceMethod(iteratorType, "MoveNext", null);
-                PropertyInfo prop = Helpers.GetProperty(iteratorType, "Current");
-                current = prop == null ? null : Helpers.GetGetMethod(prop, false);
-                if (moveNext == null && (model.MapType(ienumeratorType).IsAssignableFrom(iteratorType)))
+                PropertyInfo prop = iteratorType.GetProperty("Current", BindingFlags.Public | BindingFlags.Instance);
+                current = prop == null ? null : prop.GetGetMethod(false);
+                if (moveNext == null && typeof(IEnumerator).IsAssignableFrom(iteratorType))
                 {
-                    moveNext = Helpers.GetInstanceMethod(model.MapType(ienumeratorType), "MoveNext", null);
+                    moveNext = Helpers.GetInstanceMethod(typeof(IEnumerator), "MoveNext", null);
                 }
                 // fully typed
-                if (moveNext != null && moveNext.ReturnType == model.MapType(typeof(bool))
+                if (moveNext != null && moveNext.ReturnType == typeof(bool)
                     && current != null && current.ReturnType == itemType)
                 {
                     return getEnumerator;
                 }
                 moveNext = current = getEnumerator = null;
             }
-            
+            Type enumeratorType;
 #if !NO_GENERICS
-            // try IEnumerable<T>
-            Type tmp = model.MapType(typeof(System.Collections.Generic.IEnumerable<>), false);
-            
-            if (tmp != null)
+            enumeratorType = typeof(System.Collections.Generic.IEnumerable<>).MakeGenericType(itemType);
+            if (enumeratorType.IsAssignableFrom(ExpectedType))
             {
-                tmp = tmp.MakeGenericType(itemType);
-
-#if WINRT
-                enumeratorType = tmp.GetTypeInfo();
-#else
-                enumeratorType = tmp;
-#endif
-            }
-;
-            if (enumeratorType != null && enumeratorType.IsAssignableFrom(expectedType))
-            {
-                getEnumerator = Helpers.GetInstanceMethod(enumeratorType, "GetEnumerator");
-                
-#if WINRT
-                iteratorType = getEnumerator.ReturnType.GetTypeInfo();
-#else
+                getEnumerator = enumeratorType.GetMethod("GetEnumerator");
                 iteratorType = getEnumerator.ReturnType;
-#endif
-
-                moveNext = Helpers.GetInstanceMethod(model.MapType(ienumeratorType), "MoveNext");
-                current = Helpers.GetGetMethod(Helpers.GetProperty(iteratorType, "Current"), false);
+                moveNext = typeof(IEnumerator).GetMethod("MoveNext");
+                current = iteratorType.GetProperty("Current").GetGetMethod(false);
                 return getEnumerator;
             }
 #endif
-            // give up and fall-back to non-generic IEnumerable
-            enumeratorType = model.MapType(ienumerableType);
-            getEnumerator = Helpers.GetInstanceMethod(enumeratorType, "GetEnumerator");
-            iteratorType = getEnumerator.ReturnType
-#if WINRT
-                .GetTypeInfo()
-#endif
-                ;
-            moveNext = Helpers.GetInstanceMethod(iteratorType, "MoveNext");
-            current = Helpers.GetGetMethod(Helpers.GetProperty(iteratorType,"Current"), false);
+            enumeratorType = typeof(IEnumerable);
+            getEnumerator = enumeratorType.GetMethod("GetEnumerator");
+            iteratorType = getEnumerator.ReturnType;
+            moveNext = iteratorType.GetMethod("MoveNext");
+            current = iteratorType.GetProperty("Current").GetGetMethod(false);
             return getEnumerator;
         }
 #if FEAT_COMPILER
@@ -372,30 +311,30 @@ namespace ProtoBuf.Serializers
         {
             using (Compiler.Local list = ctx.GetLocalWithValue(ExpectedType, valueFrom))
             {
-                MethodInfo moveNext, current, getEnumerator = GetEnumeratorInfo(ctx.Model, out moveNext, out current);
+                MethodInfo moveNext, current, getEnumerator = GetEnumeratorInfo(out moveNext, out current);
                 Helpers.DebugAssert(moveNext != null);
                 Helpers.DebugAssert(current != null);
                 Helpers.DebugAssert(getEnumerator != null);
                 Type enumeratorType = getEnumerator.ReturnType;
                 bool writePacked = WritePacked;
                 using (Compiler.Local iter = new Compiler.Local(ctx, enumeratorType))
-                using (Compiler.Local token = writePacked ? new Compiler.Local(ctx, ctx.MapType(typeof(SubItemToken))) : null)
+                using (Compiler.Local token = writePacked ? new Compiler.Local(ctx, typeof(SubItemToken)) : null)
                 {
                     if (writePacked)
                     {
                         ctx.LoadValue(fieldNumber);
                         ctx.LoadValue((int)WireType.String);
                         ctx.LoadReaderWriter();
-                        ctx.EmitCall(ctx.MapType(typeof(ProtoWriter)).GetMethod("WriteFieldHeader"));
+                        ctx.EmitCall(typeof(ProtoWriter).GetMethod("WriteFieldHeader"));
 
                         ctx.LoadValue(list);
                         ctx.LoadReaderWriter();
-                        ctx.EmitCall(ctx.MapType(typeof(ProtoWriter)).GetMethod("StartSubItem"));
+                        ctx.EmitCall(typeof(ProtoWriter).GetMethod("StartSubItem"));
                         ctx.StoreValue(token);
 
                         ctx.LoadValue(fieldNumber);
                         ctx.LoadReaderWriter();
-                        ctx.EmitCall(ctx.MapType(typeof(ProtoWriter)).GetMethod("SetPackedField"));
+                        ctx.EmitCall(typeof(ProtoWriter).GetMethod("SetPackedField"));
                     }
 
                     ctx.LoadAddress(list, ExpectedType);
@@ -414,7 +353,7 @@ namespace ProtoBuf.Serializers
                         ctx.LoadAddress(iter, enumeratorType);
                         ctx.EmitCall(current);
                         Type itemType = Tail.ExpectedType;
-                        if (itemType != ctx.MapType(typeof(object)) && current.ReturnType == ctx.MapType(typeof(object)))
+                        if (itemType != typeof(object) && current.ReturnType == typeof(object))
                         {
                             ctx.CastFromObject(itemType);
                         }
@@ -430,14 +369,12 @@ namespace ProtoBuf.Serializers
                     {
                         ctx.LoadValue(token);
                         ctx.LoadReaderWriter();
-                        ctx.EmitCall(ctx.MapType(typeof(ProtoWriter)).GetMethod("EndSubItem"));
+                        ctx.EmitCall(typeof(ProtoWriter).GetMethod("EndSubItem"));
                     }                    
                 }
             }
         }
 #endif
-
-#if !FEAT_IKVM
         public override void Write(object value, ProtoWriter dest)
         {
             SubItemToken token;
@@ -452,10 +389,9 @@ namespace ProtoBuf.Serializers
             {
                 token = new SubItemToken(); // default
             }
-            bool checkForNull = !SupportNull;
             foreach (object subItem in (IEnumerable)value)
             {
-                if (checkForNull && subItem == null) { throw new NullReferenceException(); }
+                if (subItem == null) { throw new NullReferenceException(); }
                 Tail.Write(subItem, dest);
             }
             if (writePacked)
@@ -511,7 +447,6 @@ namespace ProtoBuf.Serializers
             }
             return origValue == value ? null : value;
         }
-#endif
 
     }
 }
